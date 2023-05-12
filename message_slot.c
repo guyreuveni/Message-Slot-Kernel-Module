@@ -222,7 +222,7 @@ static void free_all(msg_slot_file_node* root)
 
 static int device_open(struct inode* inode, struct file* file)
 {   
-    msg_slot_file_node* node, new_node;
+    msg_slot_file_node* node, *new_node;
     unsigned int curr_node_minor_num;
     /*TODO: hadle error in iminor*/
     unsigned int minor_num = iminor(inode);
