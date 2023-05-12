@@ -1,1 +1,414 @@
+/*=================MACROS AND INCLUDES=========================*/
+
+#undef __KERNEL__
+#define __KERNEL__
+#undef MODULE
+#define MODULE
+
+/*TODO: make sure all includes are necessary*/
+#include <linux/kernel.h> /*For kernel work*/
+#include <linux/module.h> /*Specifically, a module work*/
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/string.h>
+#include <linux/slab.h> /*For kmalloc*/
+
+
+
+#include "message_slot.h"
+
+
+/*TODO: check this error*/
+MODULE_LICENSE("GPL");
+
+
+
+/*===================INITIALIZIONS=============================*/
+/*Every message slot file will have a node and every channel will have a node.
+The nodes of the message slot files will sit in a binary search tree whose keys are
+the minor numbers. Every node message slot file node points to the root of a binary
+search tree that contains all the channel nodes that are open in this file such
+that the keys are the channel ids.*/
+
+typedef struct channel_node
+{
+    /*TODO: make sure using unsigned int is good. in the instructions it says that it
+    gets an unsigned int but ioctl gets an unsigned long. How does the limititaion to
+    2^20 channels affects this?*/
+    unsigned int channel_id;
+    char buffer[BUF_LEN];
+    size_t length;
+    struct channel_node* left;
+    struct channel_node* right;
+} channel_node;
+
+typedef struct msg_slot_file_node 
+{   /*TODO: make sure using an unsigned int is good*/
+    unsigned int minor;
+    channel_node* root;
+    struct msg_slot_file_node* left;
+    struct msg_slot_file_node* right;
+} msg_slot_file_node;
+
+
+/*The message slot files tree initialization to be empty*/
+static msg_slot_file_node* msg_slot_files_root = NULL;
+
+
+/*=================== HELPER FUNCTIONS ========================*/
+
+/*Given minor num, creates a new message slot device file node with this minor num
+and returns a pointer to it. If an error occurs return NULL*/
+msg_slot_file_node* create_file_node(unsigned int minor_num)
+{
+    msg_slot_file_node* node;
+
+    node = (msg_slot_file_node*) kmalloc(sizeof(msg_slot_file_node),GFP_KERNEL);
+    if (node == NULL){
+        /*kmalloc failed. returns NULL*/
+        return NULL;
+    }
+
+    node -> minor = minor_num;
+    node -> root = NULL;
+    node -> left = NULL;
+    node -> right = NULL;
+
+    return node;
+}
+
+
+/*Given channel id, creates a channel node with this channel id
+and returns a pointer to it. If an error occurs return NULL*/
+channel_node* create_channel_node(unsigned int channel_id)
+{
+    channel_node* node;
+
+    node = (channel_node*) kmalloc(sizeof(channel_node),GFP_KERNEL);
+    if (node == NULL){
+        /*kmalloc failed. returns NULL*/
+        return NULL;
+    }
+
+    node -> channel_id = channel_id;
+    node -> length = 0;
+    node -> left = NULL;
+    node -> right = NULL;
+
+    return node;
+}
+
+
+
+/*Given a minor number of a message slot device file which was already opened, returns
+its correspondig tree node.*/
+msg_slot_file_node* find_file_node(unsigned minor_number)
+{   
+    unsigned int curr_minor;
+    msg_slot_file_node* node = msg_slot_files_root;
+    
+    while (1){
+        curr_minor = node -> minor;
+        if (curr_minor == minor_number){
+            return node;
+        }
+        if (minor_number < curr_minor){
+            node = node -> left;
+        }
+        else {
+            node = node -> right;
+        }
+    }
+}
+
+
+/*Given a root of channels tree and channel id, returns the node that corrsponds
+to the channel with that id. If doesn't exist, create one, adds it to the tree
+and returns it. Returns NULL if an error occurs.*/
+channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
+{
+
+    channel_node* node, new_node;
+    unsigned int curr_node_id;
+
+    if (root == NULL){
+        /*The tree is empty*/
+        new_node = create_channel_node(channel_id);
+        if (new_node == NULL) {
+            /*An error occured in create_channel_node. returns NULL*/
+            return NULL;
+        }
+        return new_node;
+    }
+
+    node = root;
+    while (1)
+    {
+        curr_node_id = node -> channel_id;
+        if (curr_node_id == channel_id)
+        {   
+            /*The tree already contains a node with this channel id*/
+            return node;
+        }
+
+        if (channel_id < curr_node_id)
+        {
+            if (node -> left == NULL){
+                /*Creating a new node for the channel id and inserting it to the tree*/
+                new_node = create_channel_node(channel_id);
+                if (new_node == NULL) {
+                        /*An error occured in create_channel_node. returns NULL*/
+                        return NULL;
+                    }
+                node -> left = new_node;
+                return new_node;   
+            }
+            /*continue searching in the left sub-tree*/
+            node = node -> left;
+        }
+        else
+        {
+            if (node -> right == NULL){
+                /*Creating a new node for the channel id and inserting it to the tree*/
+                new_node = create_channel_node(channel_id);
+                if (new_node == NULL) {
+                        /*An error occured in create_channel_node. returns NULL*/
+                        return NULL;
+                    }
+                node -> right = new_node;
+                return new_node;   
+            }
+
+            /*continue searching in the right sub-tree*/
+            node = node -> left;
+        }
+        
+    
+    }
+}
+/*=================== DEVICE FUNCTIONS ========================*/
+
+static int device_open(struct inode* inode, struct file* file)
+{   
+    msg_slot_file_node* node, new_node;
+    unsigned int curr_node_minor_num;
+    /*TODO: hadle error in iminor*/
+    unsigned int minor_num = iminor(inode);
+    if (msg_slot_files_root == NULL){
+        /*This is the first message slot device file opened*/
+        msg_slot_files_root = create_file_node(minor_num);
+        if (msg_slot_files_root == NULL){
+            /*TODO: handle error*/
+        }
+        return SUCCESS;
+    }
+
+    node = msg_slot_files_root;
+    while(1){
+        curr_node_minor_num = node -> minor;
+        if (minor_num == curr_node_minor_num){
+            /*This message slot device file was already opened*/
+            return SUCCESS;
+        }
+        if (minor_num < curr_node_minor_num){
+            if (node -> left == NULL){
+                /*Creating a new node for the file and inserting it as the left son
+                of the current node*/
+                new_node = create_file_node(minor_num);
+                if (new_node == NULL){
+                    /*TODO: handle error*/
+                }
+                node -> left = new_node;
+                return SUCCESS;
+            }
+            node = node -> left;
+        }
+        else {
+            if (node -> right == NULL){
+                /*Creating a new node for the file and inserting it as the right son
+                of the current node*/
+                new_node = create_file_node(minor_num);
+                if (new_node == NULL){
+                    /*TODO: handle error*/
+                }
+                node -> right = new_node;
+                return SUCCESS;
+            }
+            node = node -> right;
+        }
+    }
+
+}
+
+/*----------------------------------------------------------------------------------*/
+/*TODO: handle the fact that it said in the instructions that the param can be int*/
+static long device_ioctl(   struct file* file,
+                            unsigned int ioctl_command_id,
+                            unsigned long ioctl_param)
+{
+    unsigned int minor_num, new_channel_id, curr_channel_id, node_id;
+    msg_slot_file_node* f_node;
+    channel_node* c_node;
+    
+    if (ioctl_command_id != MSG_SLOT_CHANNEL || ioctl_param == 0){
+        /*Invaid arguments*/
+        /*TODO: make sure handling error correctly*/
+        errno = EINVAL;
+        return -1;
+    }
+    
+    /*Make sure what you need to do before this casting*/
+    new_channel_id = (unsigned int) ioctl_param;
+    if (file -> private_data != NULL) {
+        curr_channel_id = file -> private_data -> channel_id;
+        if (new_channel_id == curr_channel_id){
+            /*The struct file already points to the right channel*/
+            return SUCCESS;
+        }
+    }
+    
+    /*TODO: hadle error in iminor*/
+    minor_num = iminor(file -> f_inode);
+    f_node = find_file_node(minor_num);
+    c_node = get_channel_node(f_node -> root, new_channel_id);
+    if (c_node == NULL){
+        /*Error happend in get_channel_node*/
+        /*TODO: handle error*/
+    }
+
+    if (f_node -> root == NULL)
+    {
+        /*This is the first channel opened in this file*/
+        f_node -> root = c_node;
+    }
+    
+
+    file -> private_data = c_node;
+    return SUCCESS;
+}
+
+/*----------------------------------------------------------------------------------*/
+
+/*TODO: what is __user*/
+static ssize_t device_read( struct  file* file,
+                            char    __user* buffer,
+                            size_t  length,
+                            loff_t* offset)
+{
+    channel_node* node;
+    size_t cur_msg_len;
+    int i;
+    char* msg;
+
+    if (file -> private_data == NULL){
+        /*No channel has been set on the file descriptor*/
+        /*TODO: make sure handling error correctly*/
+        errno = EINVAL;
+        return -1;
+    }
+
+    node = (channel_node*) file -> private_data;
+    cur_msg_len = node -> length;
+    if (cur_msg_len == 0){
+        /*No message exists on the channel*/
+        /*TODO: make sure handling error correctly*/
+        errno = EWOULDBLOCK;
+        return -1;
+    }
+    
+    if (length < cur_msg_len){
+        /*The provided buffer length is too small to hold the last message written
+        on the channel*/
+        /*TODO: make sure handling error correctly*/
+        errno = ENOSPC;
+        return -1;
+    }
+
+    msg = node -> buffer;
+
+    /*Copying the message into the user's buufer*/
+    for (i = 0; i < cur_msg_len; ++i){
+        put_user(msg[i], &buffer[i]);
+        /*TODO: put_user is a macro. how to check for errors if needed*/
+    }
+
+    return (ssize_t)cur_msg_len;
+}
+
+
+static ssize_t device_write(    struct file*    file,
+                                const char      __user* buffer,
+                                size_t          length,
+                                loff_t*         offset)
+{
+    if (file -> private_data == NULL){
+        /*No channel has been set on the file descriptor*/
+        /*TODO: make sure handling error correctly*/
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (length == 0 || length > 128){
+        /*Message length is invalid*/
+        /*TODO: make sure handling error correctly*/
+        errno = EMSGSIZE;
+        return -1;
+    }
+}
+
+
+/*=================== DEVICE SETUP ===========================*/
+
+/*Assigning the "file_opertations struct" with the device implementation
+to the functions*/
+
+/*TODO: handle errors*/
+struct file_operations Fops = {
+    .owner = THIS_MODULE,
+    .read = device_read,
+    .write = device_write,
+    .open = device_open,
+    /*TODO: make sure you need to use unlocked_ioctl*/
+    .unlocked_ioctl = device_ioctl
+};
+
+
+/*Intializing the device driver module - registering as a character device driver*/
+
+/*TODO: the error probably has to do with __init*/
+static int __init init_driver(void)
+{
+    int rc;
+
+    /*Registering as a charcter device driver*/
+    rc = register_chrdev(MAJOR_NUM, DEVICE_NAME, &Fops);
+
+    if (rc < 0){
+        /*TODO: handle failed registering*/
+    }
+
+    return SUCCESS;    
+}
+
+
+/*Unloader for device driver*/
+
+static void __exit close_driver(void)
+{
+    /*Unregister the device*/
+    /*TODO: the tirgul code says the following should always succeed. make sure no
+    need to handle errors*/
+    unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
+
+    /*TODO: free all memory*/
+
+}
+
+/*Defining the macros for loading and unloading of the module*/
+module_init(init_driver);
+module_exit(close_driver);
+
+/*=============================== THE END =========================================*/
+
+
 
