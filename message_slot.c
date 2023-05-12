@@ -5,22 +5,17 @@
 #undef MODULE
 #define MODULE
 
-/*TODO: make sure all includes are necessary*/
 #include <linux/kernel.h> /*For kernel work*/
 #include <linux/module.h> /*Specifically, a module work*/
-#include <linux/fs.h>
-#include <linux/uaccess.h>
-#include <linux/string.h>
+#include <linux/fs.h> /*for files*/
+#include <linux/uaccess.h> /*for put/get user*/
 #include <linux/slab.h> /*For kmalloc*/
-
 
 
 #include "message_slot.h"
 
 
-/*TODO: check this error*/
 MODULE_LICENSE("GPL");
-
 
 
 /*===================INITIALIZIONS=============================*/
@@ -36,6 +31,8 @@ typedef struct channel_node
     gets an unsigned int but ioctl gets an unsigned long. How does the limititaion to
     2^20 channels affects this?*/
     unsigned int channel_id;
+    /*TODO: make sure it is allowed to keep buffer with length 128 for every process all
+    the time*/
     char buffer[BUF_LEN];
     size_t length;
     struct channel_node* left;
@@ -43,7 +40,7 @@ typedef struct channel_node
 } channel_node;
 
 typedef struct msg_slot_file_node 
-{   /*TODO: make sure using an unsigned int is good*/
+{   
     unsigned int minor;
     channel_node* root;
     struct msg_slot_file_node* left;
@@ -204,7 +201,7 @@ static void free_channels_tree(channel_node* root)
         }
 }
 
-/*Freeing a channels tree*/
+/*Freeing device files tree*/
 static void free_all(msg_slot_file_node* root)
 {
     if (root != NULL){
@@ -278,7 +275,7 @@ static long device_ioctl(   struct file* file,
                             unsigned int ioctl_command_id,
                             unsigned long ioctl_param)
 {
-    unsigned int minor_num, new_channel_id, curr_channel_id, node_id;
+    unsigned int minor_num, new_channel_id, curr_channel_id;
     msg_slot_file_node* f_node;
     channel_node* c_node;
     
@@ -291,7 +288,7 @@ static long device_ioctl(   struct file* file,
     /*Make sure what you need to do before this casting*/
     new_channel_id = (unsigned int) ioctl_param;
     if (file -> private_data != NULL) {
-        curr_channel_id = file -> private_data -> channel_id;
+        curr_channel_id =((channel_node*)(file -> private_data)) -> channel_id;
         if (new_channel_id == curr_channel_id){
             /*The struct file already points to the right channel*/
             return SUCCESS;
@@ -414,13 +411,11 @@ static ssize_t device_write(    struct file*    file,
 /*Assigning the "file_opertations struct" with the device implementation
 to the functions*/
 
-/*TODO: handle errors*/
 struct file_operations Fops = {
     .owner = THIS_MODULE,
     .read = device_read,
     .write = device_write,
     .open = device_open,
-    /*TODO: make sure you need to use unlocked_ioctl*/
     .unlocked_ioctl = device_ioctl
 };
 
@@ -436,9 +431,11 @@ static int __init init_driver(void)
     rc = register_chrdev(MAJOR_NUM, DEVICE_NAME, &Fops);
 
     if (rc < 0){
-        /*TODO: handle failed registering*/
+        printk(KERN_ERR "registraion faild for %s device\n", DEVICE_NAME);
+        /*TODO: make sure returning rc is ok*/
+        return rc;
     }
-
+    
     return SUCCESS;    
 }
 
@@ -450,6 +447,7 @@ static void __exit close_driver(void)
     /*Unregister the device*/
     /*TODO: the tirgul code says the following should always succeed. make sure no
     need to handle errors*/
+    
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
     /*Freeing memory*/
