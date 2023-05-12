@@ -10,8 +10,6 @@ int main(int argc, char const *argv[])
 {
     /*TODO: add error handling in all functions*/
     int fd;
-    char* msg;
-
 
     if (argc != 4){
         /*TODO: handle error*/
@@ -23,9 +21,7 @@ int main(int argc, char const *argv[])
 
     ioctl(fd, MSG_SLOT_CHANNEL, atoi(argv[2]));
 
-    msg = argv[3];
-
-    write(fd, msg, strlen(msg));
+    write(fd, argv[3], strlen(argv[3]));
 
     close(fd);
 
