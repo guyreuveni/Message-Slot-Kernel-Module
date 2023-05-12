@@ -132,7 +132,7 @@ and returns it. Returns NULL if an error occurs.*/
 static channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
 {
 
-    channel_node* node, new_node;
+    channel_node *node, *new_node;
     unsigned int curr_node_id;
 
     if (root == NULL){
@@ -184,9 +184,8 @@ static channel_node* get_channel_node(channel_node* root, unsigned int channel_i
             }
 
             /*continue searching in the right sub-tree*/
-            node = node -> left;
+            node = node -> right;
         }
-        
     
     }
 }
@@ -394,6 +393,7 @@ static ssize_t device_write(    struct file*    file,
         /*TODO: handle error in get_user*/
     }
     
+    node = file -> private_data;
     /*Only after completing copying from user space successfully, copying to the
     channel buffer*/
 
