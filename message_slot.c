@@ -54,12 +54,16 @@ typedef struct msg_slot_file_node
 /*The message slot files tree initialization to be empty*/
 static msg_slot_file_node* msg_slot_files_root = NULL;
 
+/*A temp buffer for the writes to be atomic*/
+
+static char tmp_buffer[128];
+
 
 /*=================== HELPER FUNCTIONS ========================*/
 
 /*Given minor num, creates a new message slot device file node with this minor num
 and returns a pointer to it. If an error occurs return NULL*/
-msg_slot_file_node* create_file_node(unsigned int minor_num)
+static msg_slot_file_node* create_file_node(unsigned int minor_num)
 {
     msg_slot_file_node* node;
 
@@ -80,7 +84,7 @@ msg_slot_file_node* create_file_node(unsigned int minor_num)
 
 /*Given channel id, creates a channel node with this channel id
 and returns a pointer to it. If an error occurs return NULL*/
-channel_node* create_channel_node(unsigned int channel_id)
+static channel_node* create_channel_node(unsigned int channel_id)
 {
     channel_node* node;
 
@@ -102,7 +106,7 @@ channel_node* create_channel_node(unsigned int channel_id)
 
 /*Given a minor number of a message slot device file which was already opened, returns
 its correspondig tree node.*/
-msg_slot_file_node* find_file_node(unsigned minor_number)
+static msg_slot_file_node* find_file_node(unsigned minor_number)
 {   
     unsigned int curr_minor;
     msg_slot_file_node* node = msg_slot_files_root;
@@ -125,7 +129,7 @@ msg_slot_file_node* find_file_node(unsigned minor_number)
 /*Given a root of channels tree and channel id, returns the node that corrsponds
 to the channel with that id. If doesn't exist, create one, adds it to the tree
 and returns it. Returns NULL if an error occurs.*/
-channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
+static channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
 {
 
     channel_node* node, new_node;
@@ -186,6 +190,35 @@ channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
     
     }
 }
+
+
+/*Freeing a channels tree*/
+static void free_channels_tree(channel_node* root)
+{
+    if (root != NULL){
+        /*Freeing left sub-tree*/
+        free_channels_tree(root -> left);
+        /*Freeing right sub-tree*/
+        free_channels_tree(root -> right);
+        /*Freeing root*/
+        kfree(root);
+        }
+}
+
+/*Freeing a channels tree*/
+static void free_all(msg_slot_file_node* root)
+{
+    if (root != NULL){
+        /*Freeing left sub-tree*/
+        free_all(root -> left);
+        /*Freeing right sub-tree*/
+        free_all(root -> right);
+        /*Freeing root*/
+        free_channels_tree(root -> root);
+        kfree(root);
+        }
+}
+
 /*=================== DEVICE FUNCTIONS ========================*/
 
 static int device_open(struct inode* inode, struct file* file)
@@ -253,8 +286,7 @@ static long device_ioctl(   struct file* file,
     if (ioctl_command_id != MSG_SLOT_CHANNEL || ioctl_param == 0){
         /*Invaid arguments*/
         /*TODO: make sure handling error correctly*/
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
     
     /*Make sure what you need to do before this casting*/
@@ -303,8 +335,7 @@ static ssize_t device_read( struct  file* file,
     if (file -> private_data == NULL){
         /*No channel has been set on the file descriptor*/
         /*TODO: make sure handling error correctly*/
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
 
     node = (channel_node*) file -> private_data;
@@ -312,16 +343,14 @@ static ssize_t device_read( struct  file* file,
     if (cur_msg_len == 0){
         /*No message exists on the channel*/
         /*TODO: make sure handling error correctly*/
-        errno = EWOULDBLOCK;
-        return -1;
+        return -EWOULDBLOCK;
     }
     
     if (length < cur_msg_len){
         /*The provided buffer length is too small to hold the last message written
         on the channel*/
         /*TODO: make sure handling error correctly*/
-        errno = ENOSPC;
-        return -1;
+        return -ENOSPC;
     }
 
     msg = node -> buffer;
@@ -336,24 +365,47 @@ static ssize_t device_read( struct  file* file,
 }
 
 
+/*----------------------------------------------------------------------------------*/
+/*TODO: what is __user*/
+
 static ssize_t device_write(    struct file*    file,
                                 const char      __user* buffer,
                                 size_t          length,
                                 loff_t*         offset)
-{
+{   
+    channel_node* node;
+    int i;
+
     if (file -> private_data == NULL){
         /*No channel has been set on the file descriptor*/
         /*TODO: make sure handling error correctly*/
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
 
     if (length == 0 || length > 128){
         /*Message length is invalid*/
         /*TODO: make sure handling error correctly*/
-        errno = EMSGSIZE;
-        return -1;
+        return -EMSGSIZE;
     }
+
+    /*Copying message from user land to kernel space first*/
+    for (i = 0; i < length; ++i){
+        get_user(tmp_buffer[i], &buffer[i]);
+        /*TODO: handle error in get_user*/
+    }
+    
+    /*Only after completing copying from user space successfully, copying to the
+    channel buffer*/
+
+    for (i = 0; i < length; ++i){
+        (node -> buffer)[i] = tmp_buffer[i];
+    }
+
+    /*Updating the length field in node*/
+    node -> length = length;
+
+    return (ssize_t)length;
+
 }
 
 
@@ -400,8 +452,9 @@ static void __exit close_driver(void)
     need to handle errors*/
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
-    /*TODO: free all memory*/
-
+    /*Freeing memory*/
+    /*TODO: make sure it is ok to free all memory in that point*/
+    free_all(msg_slot_files_root);
 }
 
 /*Defining the macros for loading and unloading of the module*/
