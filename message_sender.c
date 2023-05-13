@@ -5,29 +5,47 @@
 #include <sys/ioctl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <errno.h>
 
 int main(int argc, char const *argv[])
 {
-    /*TODO: add error handling in all functions*/
     int fd;
 
     if (argc != 4){
-        /*TODO: handle error*/
+        /*Invalid ammount of arguments*/
+        perror(strerror(EINVAL));
         exit(1);
     }
 
-    /*TODO: make sure you need to open write only*/
     fd = open(argv[1], O_WRONLY);
+    if (fd < 0)
+    {
+        /*open failed*/
+        perror(strerror(errno));
+        exit(1);
+    }
 
-    ioctl(fd, MSG_SLOT_CHANNEL, atoi(argv[2]));
+    if (ioctl(fd, MSG_SLOT_CHANNEL, atoi(argv[2])) < 0){
+        /*ioctl failed*/
+        perror(strerror(errno));
+        exit(1);
+    }
 
-    write(fd, argv[3], strlen(argv[3]));
+    if (write(fd, argv[3], strlen(argv[3])) < 0){
+        /*write failed*/
+        perror(strerror(errno));
+        exit(1);
+    }
 
-    close(fd);
+    if (close(fd) < 0){
+        /*close failed*/
+        perror(strerror(errno));
+        exit(1);
+    }
 
-    /*TODO: it says in the instructions to exit the program
-    with exit value 0. does returning 0 is good?*/
-    return 0;
+    /*Exiting with zero in case of success*/
+    exit(0);
 }
 
 

@@ -221,7 +221,6 @@ static int device_open(struct inode* inode, struct file* file)
 {   
     msg_slot_file_node* node, *new_node;
     unsigned int curr_node_minor_num;
-    /*TODO: hadle error in iminor*/
     unsigned int minor_num = iminor(inode);
     if (msg_slot_files_root == NULL){
         /*This is the first message slot device file opened*/
@@ -281,7 +280,6 @@ static long device_ioctl(   struct file* file,
     
     if (ioctl_command_id != MSG_SLOT_CHANNEL || ioctl_param == 0){
         /*Invaid arguments*/
-        /*TODO: make sure handling error correctly*/
         return -EINVAL;
     }
     
@@ -295,12 +293,11 @@ static long device_ioctl(   struct file* file,
         }
     }
     
-    /*TODO: hadle error in iminor*/
     minor_num = iminor(file -> f_inode);
     f_node = find_file_node(minor_num);
     c_node = get_channel_node(f_node -> root, new_channel_id);
     if (c_node == NULL){
-        /*Error happend in get_channel_node*/
+        /*An aloccation error happend in get_channel_node*/
         /*TODO: handle error*/
     }
 
@@ -317,7 +314,6 @@ static long device_ioctl(   struct file* file,
 
 /*----------------------------------------------------------------------------------*/
 
-/*TODO: what is __user*/
 static ssize_t device_read( struct  file* file,
                             char    __user* buffer,
                             size_t  length,
@@ -325,12 +321,11 @@ static ssize_t device_read( struct  file* file,
 {
     channel_node* node;
     size_t cur_msg_len;
-    int i;
+    int i, ret_value;
     char* msg;
 
     if (file -> private_data == NULL){
         /*No channel has been set on the file descriptor*/
-        /*TODO: make sure handling error correctly*/
         return -EINVAL;
     }
 
@@ -338,14 +333,12 @@ static ssize_t device_read( struct  file* file,
     cur_msg_len = node -> length;
     if (cur_msg_len == 0){
         /*No message exists on the channel*/
-        /*TODO: make sure handling error correctly*/
         return -EWOULDBLOCK;
     }
     
     if (length < cur_msg_len){
         /*The provided buffer length is too small to hold the last message written
         on the channel*/
-        /*TODO: make sure handling error correctly*/
         return -ENOSPC;
     }
 
@@ -353,8 +346,11 @@ static ssize_t device_read( struct  file* file,
 
     /*Copying the message into the user's buufer*/
     for (i = 0; i < cur_msg_len; ++i){
-        put_user(msg[i], &buffer[i]);
-        /*TODO: put_user is a macro. how to check for errors if needed*/
+        ret_value = put_user(msg[i], &buffer[i]);
+        if (ret_value != 0){
+            /*put_user failed*/
+            return ret_value;
+        }
     }
 
     return (ssize_t)cur_msg_len;
@@ -362,7 +358,6 @@ static ssize_t device_read( struct  file* file,
 
 
 /*----------------------------------------------------------------------------------*/
-/*TODO: what is __user*/
 
 static ssize_t device_write(    struct file*    file,
                                 const char      __user* buffer,
@@ -370,30 +365,30 @@ static ssize_t device_write(    struct file*    file,
                                 loff_t*         offset)
 {   
     channel_node* node;
-    int i;
+    int i, ret_value;
 
     if (file -> private_data == NULL){
         /*No channel has been set on the file descriptor*/
-        /*TODO: make sure handling error correctly*/
         return -EINVAL;
     }
 
     if (length == 0 || length > 128){
         /*Message length is invalid*/
-        /*TODO: make sure handling error correctly*/
         return -EMSGSIZE;
     }
 
     /*Copying message from user land to kernel space first*/
     for (i = 0; i < length; ++i){
-        get_user(tmp_buffer[i], &buffer[i]);
-        /*TODO: handle error in get_user*/
+        ret_value = get_user(tmp_buffer[i], &buffer[i]);
+        if (ret_value != 0){
+            /*get_user failed*/
+            return ret_value;
+        }
     }
     
     node = file -> private_data;
     /*Only after completing copying from user space successfully, copying to the
     channel buffer*/
-
     for (i = 0; i < length; ++i){
         (node -> buffer)[i] = tmp_buffer[i];
     }
@@ -422,7 +417,6 @@ struct file_operations Fops = {
 
 /*Intializing the device driver module - registering as a character device driver*/
 
-/*TODO: the error probably has to do with __init*/
 static int __init init_driver(void)
 {
     int rc;
@@ -447,11 +441,9 @@ static void __exit close_driver(void)
     /*Unregister the device*/
     /*TODO: the tirgul code says the following should always succeed. make sure no
     need to handle errors*/
-    
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
     /*Freeing memory*/
-    /*TODO: make sure it is ok to free all memory in that point*/
     free_all(msg_slot_files_root);
 }
 
