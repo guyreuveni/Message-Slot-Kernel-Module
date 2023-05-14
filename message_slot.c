@@ -27,12 +27,8 @@ that the keys are the channel ids.*/
 
 typedef struct channel_node
 {
-    /*TODO: make sure using unsigned int is good. in the instructions it says that it
-    gets an unsigned int but ioctl gets an unsigned long. How does the limititaion to
-    2^20 channels affects this?*/
+    /*TODO: make sure how does the limititatiom to 2^20 channels affect the code*/
     unsigned int channel_id;
-    /*TODO: make sure it is allowed to keep buffer with length 128 for every process all
-    the time*/
     char buffer[BUF_LEN];
     size_t length;
     struct channel_node* left;
@@ -226,7 +222,8 @@ static int device_open(struct inode* inode, struct file* file)
         /*This is the first message slot device file opened*/
         msg_slot_files_root = create_file_node(minor_num);
         if (msg_slot_files_root == NULL){
-            /*TODO: handle error*/
+            /*memory allocation to a new node failed*/
+            return -ENOMEM;
         }
         return SUCCESS;
     }
@@ -244,7 +241,8 @@ static int device_open(struct inode* inode, struct file* file)
                 of the current node*/
                 new_node = create_file_node(minor_num);
                 if (new_node == NULL){
-                    /*TODO: handle error*/
+                    /*memory allocation to a new node failed*/
+                    return -ENOMEM;
                 }
                 node -> left = new_node;
                 return SUCCESS;
@@ -257,7 +255,8 @@ static int device_open(struct inode* inode, struct file* file)
                 of the current node*/
                 new_node = create_file_node(minor_num);
                 if (new_node == NULL){
-                    /*TODO: handle error*/
+                    /*memory allocation to a new node failed*/
+                    return -ENOMEM;
                 }
                 node -> right = new_node;
                 return SUCCESS;
@@ -269,7 +268,6 @@ static int device_open(struct inode* inode, struct file* file)
 }
 
 /*----------------------------------------------------------------------------------*/
-/*TODO: handle the fact that it said in the instructions that the param can be int*/
 static long device_ioctl(   struct file* file,
                             unsigned int ioctl_command_id,
                             unsigned long ioctl_param)
@@ -283,7 +281,7 @@ static long device_ioctl(   struct file* file,
         return -EINVAL;
     }
     
-    /*Make sure what you need to do before this casting*/
+    /*we can assume that the channel id provided is less than 2^32*/
     new_channel_id = (unsigned int) ioctl_param;
     if (file -> private_data != NULL) {
         curr_channel_id =((channel_node*)(file -> private_data)) -> channel_id;
@@ -297,8 +295,8 @@ static long device_ioctl(   struct file* file,
     f_node = find_file_node(minor_num);
     c_node = get_channel_node(f_node -> root, new_channel_id);
     if (c_node == NULL){
-        /*An aloccation error happend in get_channel_node*/
-        /*TODO: handle error*/
+        /*memory allocation to a new node failed*/
+        return -ENOMEM;
     }
 
     if (f_node -> root == NULL)
@@ -425,8 +423,8 @@ static int __init init_driver(void)
     rc = register_chrdev(MAJOR_NUM, DEVICE_NAME, &Fops);
 
     if (rc < 0){
+        /*Failed registering the driver*/
         printk(KERN_ERR "registraion faild for %s device\n", DEVICE_NAME);
-        /*TODO: make sure returning rc is ok*/
         return rc;
     }
     
@@ -439,8 +437,6 @@ static int __init init_driver(void)
 static void __exit close_driver(void)
 {
     /*Unregister the device*/
-    /*TODO: the tirgul code says the following should always succeed. make sure no
-    need to handle errors*/
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
     /*Freeing memory*/
