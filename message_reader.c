@@ -16,7 +16,7 @@ int main(int argc, char const *argv[])
 
     if (argc != 3){
         /*Invalid ammount of arguments*/
-        perror(strerror(EINVAL));
+        perror("Invalid ammount of arguments");
         exit(1);
     }
 
@@ -24,14 +24,14 @@ int main(int argc, char const *argv[])
     if (fd < 0)
     {
         /*open failed*/
-        perror(strerror(errno));
+        perror("Open failed");
         exit(1);
     }
     
 
     if (ioctl(fd, MSG_SLOT_CHANNEL, atoi(argv[2])) < 0){
         /*ioctl failed*/
-        perror(strerror(errno));
+        perror("ioctl failed");
         exit(1);
     }
 
@@ -39,19 +39,19 @@ int main(int argc, char const *argv[])
 
     if (msg_length < 0){
         /*read failed*/
-        perror(strerror(errno));
+        perror("read failed");
         exit(1);
     }
 
     if (close(fd) < 0){
         /*close failed*/
-        perror(strerror(errno));
+        perror("close failed");
         exit(1);
     }
 
     if (write(STDOUT_FILENO, buffer, msg_length) < 0){
         /*write failed*/
-        perror(strerror(errno));
+        perror("write failed");
         exit(1);
     }
     
