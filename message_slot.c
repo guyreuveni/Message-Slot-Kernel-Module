@@ -27,7 +27,6 @@ that the keys are the channel ids.*/
 
 typedef struct channel_node
 {
-    /*TODO: make sure how does the limititatiom to 2^20 channels affect the code*/
     unsigned int channel_id;
     char buffer[BUF_LEN];
     size_t length;
@@ -384,7 +383,7 @@ static ssize_t device_write(    struct file*    file,
         }
     }
     
-    node = file -> private_data;
+    node = (channel_node*)file -> private_data;
     /*Only after completing copying from user space successfully, copying to the
     channel buffer*/
     for (i = 0; i < length; ++i){
