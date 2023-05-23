@@ -318,7 +318,7 @@ static ssize_t device_read( struct  file* file,
 {
     channel_node* node;
     size_t cur_msg_len;
-    int i, ret_value;
+    int i, ret_value, j;
     char* msg;
 
     if (file -> private_data == NULL){
@@ -341,11 +341,23 @@ static ssize_t device_read( struct  file* file,
 
     msg = node -> buffer;
 
+    /*Reading user's buffer to tmp_buffer in kernel for atomic*/
+    for (i = 0; i < cur_msg_len; i++){
+        ret_value = get_user(tmp_buffer[i], &buffer[i]);
+        if (ret_value != 0){
+            /*Failed to read user's buffer*/
+            return ret_value;
+        }
+    }
+
     /*Copying the message into the user's buufer*/
     for (i = 0; i < cur_msg_len; ++i){
         ret_value = put_user(msg[i], &buffer[i]);
         if (ret_value != 0){
-            /*put_user failed*/
+            /*Failed to write the ith byte. restoring the bytes before*/
+            for (j = 0; j < i; j++){
+                put_user(tmp_buffer[j], &buffer[j]);
+            }
             return ret_value;
         }
     }
