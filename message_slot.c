@@ -119,9 +119,9 @@ static msg_slot_file_node* find_file_node(unsigned minor_number)
 
 
 /*Given a root of channels tree and channel id, returns the node that corrsponds
-to the channel with that id. If doesn't exist, create one, adds it to the tree
-and returns it. Returns NULL if an error occurs.*/
-static channel_node* get_channel_node(channel_node* root, unsigned int channel_id)
+to the channel with that id if it exists in the tree. If doesn't exist, and create_channel == 1 then create one, adds it to the tree
+and returns it and Returns NULL if an error occurs. else, meaning doesn't exist and create_channel != 1, returns Null*/
+static channel_node* get_channel_node(channel_node* root, unsigned int channel_id, int create_channel)
 {
 
     channel_node *node, *new_node;
@@ -129,12 +129,17 @@ static channel_node* get_channel_node(channel_node* root, unsigned int channel_i
 
     if (root == NULL){
         /*The tree is empty*/
-        new_node = create_channel_node(channel_id);
-        if (new_node == NULL) {
-            /*An error occured in create_channel_node. returns NULL*/
+        if (create_channel  == 1) { 
+            new_node = create_channel_node(channel_id);
+            if (new_node == NULL) {
+                /*An error occured in create_channel_node. returns NULL*/
+                return NULL;
+            }
+            return new_node;
+        }
+        else{
             return NULL;
         }
-        return new_node;
     }
 
     node = root;
@@ -150,14 +155,19 @@ static channel_node* get_channel_node(channel_node* root, unsigned int channel_i
         if (channel_id < curr_node_id)
         {
             if (node -> left == NULL){
-                /*Creating a new node for the channel id and inserting it to the tree*/
-                new_node = create_channel_node(channel_id);
-                if (new_node == NULL) {
-                        /*An error occured in create_channel_node. returns NULL*/
-                        return NULL;
-                    }
-                node -> left = new_node;
-                return new_node;   
+                if (create_channel  == 1) {
+                    /*Creating a new node for the channel id and inserting it to the tree*/
+                    new_node = create_channel_node(channel_id);
+                    if (new_node == NULL) {
+                            /*An error occured in create_channel_node. returns NULL*/
+                            return NULL;
+                        }
+                    node -> left = new_node;
+                    return new_node;  
+                }
+                else {
+                    return NULL;
+                } 
             }
             /*continue searching in the left sub-tree*/
             node = node -> left;
@@ -165,16 +175,20 @@ static channel_node* get_channel_node(channel_node* root, unsigned int channel_i
         else
         {
             if (node -> right == NULL){
-                /*Creating a new node for the channel id and inserting it to the tree*/
-                new_node = create_channel_node(channel_id);
-                if (new_node == NULL) {
-                        /*An error occured in create_channel_node. returns NULL*/
-                        return NULL;
-                    }
-                node -> right = new_node;
-                return new_node;   
+                if (create_channel  == 1) {
+                    /*Creating a new node for the channel id and inserting it to the tree*/
+                    new_node = create_channel_node(channel_id);
+                    if (new_node == NULL) {
+                            /*An error occured in create_channel_node. returns NULL*/
+                            return NULL;
+                        }
+                    node -> right = new_node;
+                    return new_node;
+                }
+                else {
+                    return NULL;
+                }   
             }
-
             /*continue searching in the right sub-tree*/
             node = node -> right;
         }
@@ -271,9 +285,7 @@ static long device_ioctl(   struct file* file,
                             unsigned int ioctl_command_id,
                             unsigned long ioctl_param)
 {
-    unsigned int minor_num, new_channel_id, curr_channel_id;
-    msg_slot_file_node* f_node;
-    channel_node* c_node;
+    unsigned int new_channel_id;
     
     if (ioctl_command_id != MSG_SLOT_CHANNEL || ioctl_param == 0){
         /*Invaid arguments*/
@@ -282,30 +294,7 @@ static long device_ioctl(   struct file* file,
     
     /*we can assume that the channel id provided is less than 2^32*/
     new_channel_id = (unsigned int) ioctl_param;
-    if (file -> private_data != NULL) {
-        curr_channel_id =((channel_node*)(file -> private_data)) -> channel_id;
-        if (new_channel_id == curr_channel_id){
-            /*The struct file already points to the right channel*/
-            return SUCCESS;
-        }
-    }
-    
-    minor_num = iminor(file -> f_inode);
-    f_node = find_file_node(minor_num);
-    c_node = get_channel_node(f_node -> root, new_channel_id);
-    if (c_node == NULL){
-        /*memory allocation to a new node failed*/
-        return -ENOMEM;
-    }
-
-    if (f_node -> root == NULL)
-    {
-        /*This is the first channel opened in this file*/
-        f_node -> root = c_node;
-    }
-    
-
-    file -> private_data = c_node;
+    file -> private_data = (void *) new_channel_id;
     return SUCCESS;
 }
 
@@ -317,21 +306,28 @@ static ssize_t device_read( struct  file* file,
                             loff_t* offset)
 {
     channel_node* node;
+    msg_slot_file_node* f_node;
     size_t cur_msg_len;
     int i, ret_value, j;
     char* msg;
+    unsigned int channel_id, minor_num;
 
     if (file -> private_data == NULL){
         /*No channel has been set on the file descriptor*/
         return -EINVAL;
     }
 
-    node = (channel_node*) file -> private_data;
-    cur_msg_len = node -> length;
-    if (cur_msg_len == 0){
-        /*No message exists on the channel*/
+    channel_id = (unsigned int) file -> private_data;
+    minor_num = iminor(file -> f_inode);
+    f_node = find_file_node(minor_num);
+    node = get_channel_node(f_node -> root, channel_id, 0);
+
+    if (node == NULL){
+        /*No channel has been created for this channel id and hence there was no writing to it*/
         return -EWOULDBLOCK;
     }
+
+    cur_msg_len = node -> length;
     
     if (length < cur_msg_len){
         /*The provided buffer length is too small to hold the last message written
@@ -373,7 +369,9 @@ static ssize_t device_write(    struct file*    file,
                                 size_t          length,
                                 loff_t*         offset)
 {   
-    channel_node* node;
+    unsigned int minor_num, channel_id;
+    msg_slot_file_node* f_node;
+    channel_node* c_node;
     int i, ret_value;
 
     if (file -> private_data == NULL){
@@ -394,19 +392,35 @@ static ssize_t device_write(    struct file*    file,
             return ret_value;
         }
     }
+
+    /*Getting channel node, creating one if needed*/
+
+    channel_id = (unsigned int)file -> private_data;
+    minor_num = iminor(file -> f_inode);
+    f_node = find_file_node(minor_num);
+    c_node = get_channel_node(f_node -> root, channel_id, 1);
+    if (c_node == NULL){
+        /*memory allocation to a new node failed*/
+        return -ENOMEM;
+    }
+
+    if (f_node -> root == NULL)
+    {
+        /*This is the first channel opened in this file*/
+        f_node -> root = c_node;
+    }
     
-    node = (channel_node*)file -> private_data;
+    
     /*Only after completing copying from user space successfully, copying to the
     channel buffer*/
     for (i = 0; i < length; ++i){
-        (node -> buffer)[i] = tmp_buffer[i];
+        (c_node -> buffer)[i] = tmp_buffer[i];
     }
 
     /*Updating the length field in node*/
-    node -> length = length;
+    c_node -> length = length;
 
     return (ssize_t)length;
-
 }
 
 
