@@ -10,6 +10,7 @@
 #include <linux/fs.h> /*for files*/
 #include <linux/uaccess.h> /*for put/get user*/
 #include <linux/slab.h> /*For kmalloc*/
+#include <linux/types.h> /*For casting unsigned int to void* */
 
 
 #include "message_slot.h"
@@ -294,7 +295,7 @@ static long device_ioctl(   struct file* file,
     
     /*we can assume that the channel id provided is less than 2^32*/
     new_channel_id = (unsigned int) ioctl_param;
-    file -> private_data = (void *) new_channel_id;
+    file -> private_data = (void *)(uintptr_t) new_channel_id;
     return SUCCESS;
 }
 
@@ -317,7 +318,7 @@ static ssize_t device_read( struct  file* file,
         return -EINVAL;
     }
 
-    channel_id = (unsigned int) file -> private_data;
+    channel_id = (unsigned int)(uintptr_t) file -> private_data;
     minor_num = iminor(file -> f_inode);
     f_node = find_file_node(minor_num);
     node = get_channel_node(f_node -> root, channel_id, 0);
@@ -395,7 +396,7 @@ static ssize_t device_write(    struct file*    file,
 
     /*Getting channel node, creating one if needed*/
 
-    channel_id = (unsigned int)file -> private_data;
+    channel_id = (unsigned int)(uintptr_t)file -> private_data;
     minor_num = iminor(file -> f_inode);
     f_node = find_file_node(minor_num);
     c_node = get_channel_node(f_node -> root, channel_id, 1);
